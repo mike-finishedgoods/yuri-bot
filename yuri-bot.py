@@ -613,7 +613,10 @@ def handle_mention(event, say, client, logger):
         save_history(conv_key, updated_history)
     except Exception as e:
         logger.error(f"Error processing mention: {str(e)}")
-        error_msg = "Sorry, I encountered an error processing your request. Please try again."
+        if "rate_limit" in str(e).lower() or "429" in str(e):
+            error_msg = "⚠️ I'm being rate limited by my AI provider. Give me about 60 seconds and try again — I can definitely answer this!"
+        else:
+            error_msg = "Sorry, I encountered an error processing your request. Please try again."
         try:
             client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
         except Exception:
@@ -687,7 +690,10 @@ def handle_message(event, say, client, logger):
             save_history(conv_key, updated_history)
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
-            error_msg = "Sorry, I encountered an error processing your request. Please try again."
+            if "rate_limit" in str(e).lower() or "429" in str(e):
+                error_msg = "⚠️ I'm being rate limited by my AI provider. Give me about 60 seconds and try again — I can definitely answer this!"
+            else:
+                error_msg = "Sorry, I encountered an error processing your request. Please try again."
             try:
                 client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
             except Exception:
