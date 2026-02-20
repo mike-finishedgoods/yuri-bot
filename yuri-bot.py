@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -454,6 +455,95 @@ def chat_with_claude(user_message, user_info, system_prompt, tools_list, history
 
     return final_response, messages
 
+
+# =============================================================================
+# STREAMING
+# =============================================================================
+
+SLACK_UPDATE_INTERVAL = 1.5  # seconds between Slack message edits
+
+
+def post_placeholder(client, channel, thread_ts=None):
+    """Post ⏳ placeholder and return its timestamp for later editing."""
+    kwargs = {"channel": channel, "text": "⏳"}
+    if thread_ts:
+        kwargs["thread_ts"] = thread_ts
+    result = client.chat_postMessage(**kwargs)
+    return result["ts"]
+
+
+def chat_with_claude_streaming(user_message, user_info, system_prompt, tools_list,
+                                client, channel, message_ts, history=None):
+    """Send a message to Claude, stream the final response to Slack by editing message_ts."""
+    contextual_message = f"User: {user_info['name']}"
+    if user_info.get('email'):
+        contextual_message += f" (email: {user_info['email']})"
+    contextual_message += f"\nSlack ID: {user_info['slack_id']}\n\nMessage: {user_message}"
+
+    if history:
+        messages = list(history)
+    else:
+        messages = []
+
+    messages.append({"role": "user", "content": contextual_message})
+
+    while True:
+        accumulated_text = ""
+        last_update_time = 0
+
+        with anthropic.messages.stream(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=system_prompt,
+            tools=tools_list,
+            messages=messages
+        ) as stream:
+            for text in stream.text_stream:
+                accumulated_text += text
+                now = time.time()
+                if now - last_update_time >= SLACK_UPDATE_INTERVAL and accumulated_text.strip():
+                    try:
+                        client.chat_update(channel=channel, ts=message_ts, text=accumulated_text)
+                    except Exception:
+                        pass
+                    last_update_time = now
+
+            response = stream.get_final_message()
+
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            assistant_content = []
+
+            for block in response.content:
+                if block.type == "tool_use":
+                    result = process_tool_call(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(result)
+                    })
+                    assistant_content.append(block)
+                elif block.type == "text":
+                    assistant_content.append(block)
+
+            messages.append({"role": "assistant", "content": assistant_content})
+            messages.append({"role": "user", "content": tool_results})
+            continue
+        else:
+            # Final response — one last Slack update with complete text
+            final_text = ""
+            for block in response.content:
+                if block.type == "text":
+                    final_text += block.text
+
+            try:
+                client.chat_update(channel=channel, ts=message_ts, text=final_text)
+            except Exception as e:
+                logger.error(f"Failed final Slack update: {e}")
+
+            messages.append({"role": "assistant", "content": response.content})
+            return final_text, messages
+
 # =============================================================================
 # EVENT HANDLERS
 # =============================================================================
@@ -508,12 +598,19 @@ def handle_mention(event, say, client, logger):
     )
 
     try:
-        response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
+        placeholder_ts = post_placeholder(client, channel)
+        response, updated_history = chat_with_claude_streaming(
+            text, user_info, system_prompt, query_tools,
+            client, channel, placeholder_ts, history
+        )
         save_history(conv_key, updated_history)
-        say(response)
     except Exception as e:
         logger.error(f"Error processing mention: {str(e)}")
-        say("Sorry, I encountered an error processing your request. Please try again.")
+        error_msg = "Sorry, I encountered an error processing your request. Please try again."
+        try:
+            client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
+        except Exception:
+            say(error_msg)
 
     cleanup_stale_conversations()
 
@@ -575,12 +672,19 @@ def handle_message(event, say, client, logger):
         )
 
         try:
-            response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
+            placeholder_ts = post_placeholder(client, channel)
+            response, updated_history = chat_with_claude_streaming(
+                text, user_info, system_prompt, query_tools,
+                client, channel, placeholder_ts, history
+            )
             save_history(conv_key, updated_history)
-            say(response)
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
-            say("Sorry, I encountered an error processing your request. Please try again.")
+            error_msg = "Sorry, I encountered an error processing your request. Please try again."
+            try:
+                client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
+            except Exception:
+                say(error_msg)
 
         cleanup_stale_conversations()
         return
