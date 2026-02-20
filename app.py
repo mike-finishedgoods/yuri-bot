@@ -1,7 +1,8 @@
 import os
 import re
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from anthropic import Anthropic
@@ -291,7 +292,7 @@ def process_tool_call(tool_name, tool_input):
 # =============================================================================
 
 def get_week_dates():
-    today = date.today()
+    today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
     this_monday = today - timedelta(days=today.weekday())
     lines = []
     for i in range(14):
@@ -398,7 +399,7 @@ def handle_mention(event, say, client, logger):
 
     # OOO channel — no conversation memory needed
     if channel == OOO_CHANNEL_ID:
-        today = date.today()
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
         system_prompt = OOO_SYSTEM_PROMPT.format(
             today=today.strftime("%Y-%m-%d"),
             day_of_week=today.strftime("%A"),
@@ -417,7 +418,7 @@ def handle_mention(event, say, client, logger):
     history = get_history(conv_key)
 
     schema_desc = get_schema_description()
-    today = date.today()
+    today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
     system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
 
     try:
@@ -452,7 +453,7 @@ def handle_message(event, say, client, logger):
         logger.info(f"OOO message from user {user_id}: {text}")
         user_info = get_user_info(client, user_id)
 
-        today = date.today()
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
         system_prompt = OOO_SYSTEM_PROMPT.format(
             today=today.strftime("%Y-%m-%d"),
             day_of_week=today.strftime("%A"),
@@ -475,7 +476,7 @@ def handle_message(event, say, client, logger):
         history = get_history(conv_key)
 
         schema_desc = get_schema_description()
-        today = date.today()
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
         system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
 
         try:
