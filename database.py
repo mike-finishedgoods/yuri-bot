@@ -475,12 +475,21 @@ QB DATA GUIDELINES:
 - For dollar amounts in results, display home_total_amt and home_balance (USD values)
 - Do NOT confuse deals data with QB data — deals track the sales pipeline, QB tables track actual invoices/bills/estimates
 
-IMPORTANT — QB TABLES ARE STANDALONE:
-- qbo_invoices, qbo_bills, and qbo_estimates have NO foreign key to deals
-- Customer names in QB do NOT match account_name in deals (different naming conventions)
-- NEVER join QB tables to deals — it will silently return zero rows
-- When asked about invoices "by sales rep" or "by account," group by customer_name instead
-- QB data stands on its own — query it directly from the qbo_ tables
+QB ↔ DEALS CROSS-REFERENCE:
+- qbo_invoices and qbo_bills have NO direct foreign key to deals
+- DO NOT join on customer_name — QB customer names (e.g. 'PO 5437') do NOT match deals.account_name
+- The correct join path for invoices is: qbo_invoices.doc_number = deals.sales_order_number
+- This lets you pull deal_owner, account_name, sales_rep_on_account, etc. for any invoice
+- Example: past-due invoices by sales rep:
+    SELECT d.deal_owner, d.account_name, i.doc_number, i.home_total_amt, i.home_balance, i.due_date,
+           CURRENT_DATE - i.due_date AS days_overdue
+    FROM qbo_invoices i
+    JOIN deals d ON i.doc_number = d.sales_order_number
+    WHERE i.balance > 0 AND i.due_date < CURRENT_DATE
+    ORDER BY d.deal_owner, i.due_date
+- Not every invoice will match a deal (some may be standalone). Use LEFT JOIN if you need all invoices
+  regardless of deal match.
+- For qbo_bills there is no reliable join key to deals yet — query bills standalone
 
 ═══════════════════════════════════════════════════════════
 TABLE: yuri_user_directory (maps Slack users to Zoho IDs and roles)
