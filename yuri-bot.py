@@ -355,24 +355,49 @@ def get_week_dates():
 def build_user_context(slack_user_id, slack_name):
     """Look up user in yuri_user_directory and build context string for the system prompt."""
     directory_user = lookup_user(slack_user_id)
+
     if directory_user:
         role = directory_user['role']
         name = directory_user['name']
         zoho_id = directory_user.get('zoho_user_id', 'unknown')
+        job_function = directory_user.get('job_function', 'unknown')
+
         if role == 'admin':
             return (
                 f"Name: {name}\n"
                 f"Slack ID: {slack_user_id}\n"
                 f"Zoho ID: {zoho_id}\n"
+                f"Job Function: {job_function}\n"
                 f"Role: ADMIN — full access to all deals, accounts, and systems. No deal filtering required."
             )
         else:
+            if job_function == 'account_manager':
+                access_rule = (
+                    f"Role: STANDARD — Account Manager. Can only access deals where '{name}' appears in deal_owner.\n"
+                    f"All SQL queries for deal data MUST include a WHERE clause: deal_owner ILIKE '%{name}%'."
+                )
+            elif job_function == 'sales_rep':
+                access_rule = (
+                    f"Role: STANDARD — Sales Representative. Can only access deals where '{name}' appears in sales_rep_on_deal.\n"
+                    f"All SQL queries for deal data MUST include a WHERE clause: sales_rep_on_deal ILIKE '%{name}%'."
+                )
+            elif job_function == 'logistics_manager':
+                access_rule = (
+                    f"Role: STANDARD — Logistics Manager. ALL data access is currently BLOCKED.\n"
+                    f"Do NOT execute any deal or QuickBooks queries. Inform the user their access rules are being configured."
+                )
+            else:
+                access_rule = (
+                    f"Role: STANDARD — job function unknown. Default deny: do NOT return any deal data.\n"
+                    f"Politely tell them to contact an administrator."
+                )
+
             return (
                 f"Name: {name}\n"
                 f"Slack ID: {slack_user_id}\n"
                 f"Zoho ID: {zoho_id}\n"
-                f"Role: STANDARD — can only access deals where '{name}' appears in deal_owner, sales_rep_on_account, or sales_rep_on_deal.\n"
-                f"All SQL queries for deal data MUST include a WHERE clause filtering on these columns using this user's name."
+                f"Job Function: {job_function}\n"
+                f"{access_rule}"
             )
     else:
         return (
