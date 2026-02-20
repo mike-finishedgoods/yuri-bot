@@ -317,10 +317,10 @@ IDENTIFICATION:
 
 FINANCIALS:
   total_amt                  - Invoice total (in transaction currency)
-  balance                    - Remaining balance (0 = fully paid)
+  balance                    - Remaining balance in transaction currency (0 = fully paid)
   deposit                    - Deposit amount
-  home_total_amt             - Invoice total in home currency (USD)
-  home_balance               - Remaining balance in home currency (USD)
+  home_total_amt             - Invoice total in home currency (USD) — always populated
+  home_balance               - Remaining balance in home currency (USD) — always populated
   currency_code              - e.g. 'USD', 'CAD'
   exchange_rate              - Exchange rate applied
 
@@ -375,9 +375,9 @@ IDENTIFICATION:
 
 FINANCIALS:
   total_amt                  - Bill total (in transaction currency)
-  balance                    - Remaining balance (0 = fully paid)
-  home_total_amt             - Bill total in home currency (USD)
-  home_balance               - Remaining balance in home currency (USD)
+  balance                    - Remaining balance in transaction currency (0 = fully paid)
+  home_total_amt             - Bill total in home currency (USD) — always populated
+  home_balance               - Remaining balance in home currency (USD) — always populated
   currency_code              - e.g. 'USD', 'CNY'
   exchange_rate              - Exchange rate applied
 
@@ -415,7 +415,7 @@ IDENTIFICATION:
 
 FINANCIALS:
   total_amt                  - Estimate total (in transaction currency)
-  home_total_amt             - Estimate total in home currency (USD)
+  home_total_amt             - Estimate total in home currency (USD) — always populated
   currency_code              - e.g. 'USD'
   exchange_rate              - Exchange rate applied
 
@@ -462,14 +462,34 @@ QUERY GUIDELINES
 - When asked about a specific SO number, join both tables for complete info
 - Avoid SELECT * on joins — pick specific columns to keep responses readable
 - When asked about time off, OOO, who's out, vacation, PTO — query time_off table
+
+QB DATA GUIDELINES:
 - When asked about invoices, receivables, or customer billing — query qbo_invoices
 - When asked about bills, payables, or vendor payments — query qbo_bills
 - When asked about estimates or quotes — query qbo_estimates
-- For QB tables: use home_total_amt and home_balance for USD amounts, total_amt and balance for transaction currency
-- "Past due" means balance > 0 AND due_date < CURRENT_DATE
-- "Outstanding" or "unpaid" means balance > 0
-- "Paid" means balance = 0
+- For amounts in USD, use home_total_amt and home_balance (these are always populated)
+- For filtering paid/unpaid status, use balance (not home_balance) for the boolean check:
+    "Past due" = balance > 0 AND due_date < CURRENT_DATE
+    "Outstanding" / "unpaid" = balance > 0
+    "Paid" = balance = 0
+- For dollar amounts in results, display home_total_amt and home_balance (USD values)
 - Do NOT confuse deals data with QB data — deals track the sales pipeline, QB tables track actual invoices/bills/estimates
+
+QB ↔ DEALS CROSS-REFERENCE:
+- qbo_invoices and qbo_bills do NOT have a direct foreign key to deals
+- To connect invoices to sales reps or deal info, join on customer name:
+    qbo_invoices.customer_name  →  deals.account_name
+- To connect bills to deals, join on vendor name:
+    qbo_bills.vendor_name  →  deals.vendor (or deal_line_items.vendor_name)
+- These are text-based joins — use ILIKE for fuzzy matching if needed
+- Example: invoices by sales rep:
+    SELECT d.deal_owner, i.doc_number, i.customer_name, i.home_total_amt, i.home_balance, i.due_date
+    FROM qbo_invoices i
+    JOIN deals d ON i.customer_name ILIKE d.account_name
+    WHERE i.balance > 0 AND i.due_date < CURRENT_DATE
+    GROUP BY d.deal_owner, i.doc_number, i.customer_name, i.home_total_amt, i.home_balance, i.due_date
+    ORDER BY d.deal_owner, i.due_date
+- Note: One customer may have multiple deals with different reps. Use DISTINCT or pick the most relevant deal.
 
 ═══════════════════════════════════════════════════════════
 TABLE: yuri_user_directory (maps Slack users to Zoho IDs and roles)
