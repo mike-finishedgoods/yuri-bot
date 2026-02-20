@@ -305,6 +305,147 @@ COMMON QUERIES:
     GROUP BY slack_user_name
 
 ═══════════════════════════════════════════════════════════
+TABLE: qbo_invoices (QuickBooks invoices — customer-facing)
+═══════════════════════════════════════════════════════════
+
+IDENTIFICATION:
+  qbo_id (PK)                - QuickBooks invoice ID
+  doc_number                 - Invoice number (e.g. '1042')
+  txn_date                   - Invoice date
+  due_date                   - Payment due date
+  ship_date                  - Ship date
+
+FINANCIALS:
+  total_amt                  - Invoice total (in transaction currency)
+  balance                    - Remaining balance (0 = fully paid)
+  deposit                    - Deposit amount
+  home_total_amt             - Invoice total in home currency (USD)
+  home_balance               - Remaining balance in home currency (USD)
+  currency_code              - e.g. 'USD', 'CAD'
+  exchange_rate              - Exchange rate applied
+
+CUSTOMER:
+  customer_id                - QB customer ID
+  customer_name              - Customer name
+  bill_email                 - Billing email
+  bill_addr_line1, bill_addr_city, bill_addr_state, bill_addr_postal_code, bill_addr_country
+  ship_addr_line1, ship_addr_city, ship_addr_state, ship_addr_postal_code, ship_addr_country
+
+STATUS:
+  txn_status                 - Transaction status
+  email_status               - Email delivery status
+  print_status               - Print status
+
+PAYMENT:
+  sales_term_id / sales_term_name - Payment terms
+  payment_method_id / payment_method_name - Payment method
+  allow_online_payment       - Boolean
+  allow_online_credit_card_payment - Boolean
+  allow_online_ach_payment   - Boolean
+  apply_tax_after_discount   - Boolean
+
+SHIPPING:
+  tracking_num               - Tracking number
+  ship_method_name           - Shipping method
+
+OTHER:
+  private_note               - Internal note
+  customer_memo              - Customer-facing memo
+  linked_txns                - JSONB linked transactions
+  line_items                 - JSONB invoice line items
+  created_time               - Record created (timestamp)
+  last_updated_time          - Last modified (timestamp)
+  synced_at                  - Last sync from QB (timestamp)
+
+COMMON QUERIES:
+  - Outstanding invoices: SELECT * FROM qbo_invoices WHERE balance > 0
+  - Past-due invoices: SELECT * FROM qbo_invoices WHERE balance > 0 AND due_date < CURRENT_DATE
+  - Fully paid: SELECT * FROM qbo_invoices WHERE balance = 0
+  - Total receivables: SELECT SUM(home_balance) FROM qbo_invoices WHERE balance > 0
+
+═══════════════════════════════════════════════════════════
+TABLE: qbo_bills (QuickBooks bills — vendor/supplier-facing)
+═══════════════════════════════════════════════════════════
+
+IDENTIFICATION:
+  qbo_id (PK)                - QuickBooks bill ID
+  doc_number                 - Bill number
+  txn_date                   - Bill date
+  due_date                   - Payment due date
+
+FINANCIALS:
+  total_amt                  - Bill total (in transaction currency)
+  balance                    - Remaining balance (0 = fully paid)
+  home_total_amt             - Bill total in home currency (USD)
+  home_balance               - Remaining balance in home currency (USD)
+  currency_code              - e.g. 'USD', 'CNY'
+  exchange_rate              - Exchange rate applied
+
+VENDOR:
+  vendor_id                  - QB vendor ID
+  vendor_name                - Vendor name
+
+ACCOUNTS:
+  ap_account_id              - AP account ID
+  ap_account_name            - AP account name
+
+OTHER:
+  private_note               - Internal note
+  linked_txns                - JSONB linked transactions
+  line_items                 - JSONB bill line items
+  created_time               - Record created (timestamp)
+  last_updated_time          - Last modified (timestamp)
+  synced_at                  - Last sync from QB (timestamp)
+
+COMMON QUERIES:
+  - Outstanding bills: SELECT * FROM qbo_bills WHERE balance > 0
+  - Past-due bills: SELECT * FROM qbo_bills WHERE balance > 0 AND due_date < CURRENT_DATE
+  - Bills by vendor: SELECT * FROM qbo_bills WHERE vendor_name ILIKE '%vendor%'
+  - Total payables: SELECT SUM(home_balance) FROM qbo_bills WHERE balance > 0
+
+═══════════════════════════════════════════════════════════
+TABLE: qbo_estimates (QuickBooks estimates/quotes)
+═══════════════════════════════════════════════════════════
+
+IDENTIFICATION:
+  qbo_id (PK)                - QuickBooks estimate ID
+  doc_number                 - Estimate number
+  txn_date                   - Estimate date
+  expiration_date            - Expiration date
+
+FINANCIALS:
+  total_amt                  - Estimate total (in transaction currency)
+  home_total_amt             - Estimate total in home currency (USD)
+  currency_code              - e.g. 'USD'
+  exchange_rate              - Exchange rate applied
+
+CUSTOMER:
+  customer_id                - QB customer ID
+  customer_name              - Customer name
+  bill_email                 - Billing email
+  bill_addr_line1, bill_addr_city, bill_addr_state, bill_addr_postal_code, bill_addr_country
+  ship_addr_line1, ship_addr_city, ship_addr_state, ship_addr_postal_code, ship_addr_country
+
+STATUS:
+  txn_status                 - e.g. 'Accepted', 'Pending', 'Closed'
+  email_status               - Email delivery status
+  print_status               - Print status
+  accepted_by                - Who accepted
+  accepted_date              - Date accepted
+
+TERMS:
+  sales_term_id / sales_term_name - Sales terms
+
+OTHER:
+  private_note               - Internal note
+  customer_memo              - Customer-facing memo
+  linked_txns                - JSONB linked transactions
+  line_items                 - JSONB estimate line items
+  created_time               - Record created (timestamp)
+  last_updated_time          - Last modified (timestamp)
+  synced_at                  - Last sync from QB (timestamp)
+
+═══════════════════════════════════════════════════════════
 QUERY GUIDELINES
 ═══════════════════════════════════════════════════════════
 
@@ -321,6 +462,14 @@ QUERY GUIDELINES
 - When asked about a specific SO number, join both tables for complete info
 - Avoid SELECT * on joins — pick specific columns to keep responses readable
 - When asked about time off, OOO, who's out, vacation, PTO — query time_off table
+- When asked about invoices, receivables, or customer billing — query qbo_invoices
+- When asked about bills, payables, or vendor payments — query qbo_bills
+- When asked about estimates or quotes — query qbo_estimates
+- For QB tables: use home_total_amt and home_balance for USD amounts, total_amt and balance for transaction currency
+- "Past due" means balance > 0 AND due_date < CURRENT_DATE
+- "Outstanding" or "unpaid" means balance > 0
+- "Paid" means balance = 0
+- Do NOT confuse deals data with QB data — deals track the sales pipeline, QB tables track actual invoices/bills/estimates
 
 ═══════════════════════════════════════════════════════════
 TABLE: yuri_user_directory (maps Slack users to Zoho IDs and roles)
