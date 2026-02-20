@@ -55,13 +55,13 @@ def insert_time_off(slack_user_id, slack_user_name, first_day_off, last_day_off,
 
 def lookup_user(slack_user_id):
     """Look up a user in yuri_user_directory by Slack ID.
-    Returns dict with name, role, zoho_user_id, email — or None if not found."""
+    Returns dict with name, role, zoho_user_id, email, job_function — or None if not found."""
     if not supabase:
         logger.error("Database not configured — cannot look up user")
         return None
     try:
         result = supabase.table('yuri_user_directory') \
-            .select('name, slack_user_id, email, zoho_user_id, role') \
+            .select('name, slack_user_id, email, zoho_user_id, role, job_function') \
             .eq('slack_user_id', slack_user_id) \
             .eq('is_active', True) \
             .execute()
@@ -502,6 +502,7 @@ COLUMNS:
   email                      - Email address
   zoho_user_id               - Zoho CRM user ID
   role                       - 'admin' or 'standard'
+  job_function               - 'admin', 'account_manager', 'sales_rep', or 'logistics_manager'
   is_active                  - Boolean
 
 ═══════════════════════════════════════════════════════════
