@@ -53,6 +53,54 @@ def insert_time_off(slack_user_id, slack_user_name, first_day_off, last_day_off,
         raise Exception(f"Database error: {str(e)}")
 
 
+def lookup_user(slack_user_id):
+    """Look up a user in yuri_user_directory by Slack ID.
+    Returns dict with name, role, zoho_user_id, email — or None if not found."""
+    if not supabase:
+        logger.error("Database not configured — cannot look up user")
+        return None
+    try:
+        result = supabase.table('yuri_user_directory') \
+            .select('name, slack_user_id, email, zoho_user_id, role') \
+            .eq('slack_user_id', slack_user_id) \
+            .eq('is_active', True) \
+            .execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"User directory lookup failed: {str(e)}")
+        return None
+
+
+def fetch_rules():
+    """Fetch all active rules from yuri_rules, ordered by sort_order.
+    Returns a formatted string ready to inject into the system prompt."""
+    if not supabase:
+        logger.warning("Database not configured — cannot fetch rules")
+        return ""
+    try:
+        result = supabase.table('yuri_rules') \
+            .select('section, rule_key, rule_text') \
+            .eq('is_active', True) \
+            .order('sort_order') \
+            .execute()
+        if not result.data:
+            return ""
+        lines = []
+        current_section = None
+        for row in result.data:
+            if row['section'] != current_section:
+                current_section = row['section']
+                header = current_section.upper().replace('_', ' ')
+                lines.append(f"\n[{header}]")
+            lines.append(f"- {row['rule_text']}")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Failed to fetch rules: {str(e)}")
+        return ""
+
+
 def get_schema_description():
     """Return database schema description for Claude"""
     return """
@@ -273,14 +321,30 @@ QUERY GUIDELINES
 - When asked about a specific SO number, join both tables for complete info
 - Avoid SELECT * on joins — pick specific columns to keep responses readable
 - When asked about time off, OOO, who's out, vacation, PTO — query time_off table
+
+═══════════════════════════════════════════════════════════
+TABLE: yuri_user_directory (maps Slack users to Zoho IDs and roles)
+═══════════════════════════════════════════════════════════
+
+COLUMNS:
+  id (PK)                    - Auto-incrementing ID
+  name                       - Employee name
+  slack_user_id              - Slack user ID (e.g. 'U0A8BSTE4SX')
+  email                      - Email address
+  zoho_user_id               - Zoho CRM user ID
+  role                       - 'admin' or 'standard'
+  is_active                  - Boolean
+
+═══════════════════════════════════════════════════════════
+TABLE: yuri_broker_lookup (resolves Broker ID codes to names — ADMIN ONLY)
+═══════════════════════════════════════════════════════════
+
+COLUMNS:
+  id (PK)                    - Auto-incrementing ID
+  broker_id                  - Broker code (e.g. 'KGM77')
+  first_name                 - Broker first name
+  last_name                  - Broker last name
+  is_active                  - Boolean
+
+NOTE: Only resolve broker IDs for admin users. Standard users must only see the broker_id code.
 """
-
-
-def get_user_context(slack_user_id, user_info):
-    """Get user context (placeholder for now)"""
-    return {
-        "slack_id": slack_user_id,
-        "name": user_info.get("name", ""),
-        "email": user_info.get("email", ""),
-        "role": "user"
-    }
