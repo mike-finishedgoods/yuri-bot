@@ -396,6 +396,17 @@ def get_user_info(client, user_id):
         return {"name": "there", "email": "", "slack_id": user_id}
 
 
+def classify_api_error(e):
+    """Classify an Anthropic API error and return an appropriate user-facing message."""
+    error_str = str(e).lower()
+    if "rate_limit" in error_str or "429" in error_str:
+        return "⚠️ I'm being rate limited by my AI provider. Give me about 60 seconds and try again — I can definitely answer this!"
+    elif "overloaded" in error_str or "529" in error_str:
+        return "⚠️ My AI provider's servers are at capacity right now. This is temporary — try again in a minute or two!"
+    else:
+        return "Sorry, I encountered an error processing your request. Please try again."
+
+
 def chat_with_claude(user_message, user_info, system_prompt, tools_list, history=None):
     """Send a message to Claude with conversation history and handle tool calls"""
     contextual_message = f"User: {user_info['name']}"
@@ -613,10 +624,7 @@ def handle_mention(event, say, client, logger):
         save_history(conv_key, updated_history)
     except Exception as e:
         logger.error(f"Error processing mention: {str(e)}")
-        if "rate_limit" in str(e).lower() or "429" in str(e):
-            error_msg = "⚠️ I'm being rate limited by my AI provider. Give me about 60 seconds and try again — I can definitely answer this!"
-        else:
-            error_msg = "Sorry, I encountered an error processing your request. Please try again."
+        error_msg = classify_api_error(e)
         try:
             client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
         except Exception:
@@ -690,10 +698,7 @@ def handle_message(event, say, client, logger):
             save_history(conv_key, updated_history)
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
-            if "rate_limit" in str(e).lower() or "429" in str(e):
-                error_msg = "⚠️ I'm being rate limited by my AI provider. Give me about 60 seconds and try again — I can definitely answer this!"
-            else:
-                error_msg = "Sorry, I encountered an error processing your request. Please try again."
+            error_msg = classify_api_error(e)
             try:
                 client.chat_update(channel=channel, ts=placeholder_ts, text=error_msg)
             except Exception:
