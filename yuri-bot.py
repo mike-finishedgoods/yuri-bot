@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from anthropic import Anthropic
-from database import execute_query, get_schema_description, insert_time_off
+from database import execute_query, get_schema_description, insert_time_off, lookup_user, fetch_rules
 from calendar_service import create_ooo_event
 
 logging.basicConfig(level=logging.INFO)
@@ -80,14 +80,36 @@ def cleanup_stale_conversations():
 
 
 # =============================================================================
+# RULES CACHE
+# =============================================================================
+
+_rules_cache = {"text": "", "fetched_at": None}
+RULES_CACHE_TTL_MINUTES = 15
+
+
+def get_cached_rules():
+    """Fetch rules from yuri_rules table, cached for 15 minutes."""
+    now = datetime.now()
+    if _rules_cache["fetched_at"] and (now - _rules_cache["fetched_at"]) < timedelta(minutes=RULES_CACHE_TTL_MINUTES):
+        return _rules_cache["text"]
+    rules_text = fetch_rules()
+    _rules_cache["text"] = rules_text
+    _rules_cache["fetched_at"] = now
+    if rules_text:
+        logger.info(f"Rules cache refreshed ({len(rules_text)} chars)")
+    else:
+        logger.warning("Rules cache refresh returned empty")
+    return rules_text
+
+
+# =============================================================================
 # SYSTEM PROMPTS
 # =============================================================================
 
-BUSINESS_RULES = """
-BUSINESS RULES & CONTEXT:
+BUSINESS_CONTEXT = """
+COMPANY CONTEXT:
 - Finished Goods is a product sourcing and procurement company (~15 employees)
 - "SO" or "Sales Order" numbers are the primary way people reference deals (e.g. "SO 7158" or just "7158")
-- Deal stages progress roughly in this order: Unsigned → Ready for Review → Pre-Production → Production → Shipped → Delivered & Paid
 - "D&P" is shorthand for "Delivered and Paid"
 - Deals can also be "Closed Lost" (lost/cancelled)
 - Each deal can have multiple line items (different products in the same order)
@@ -111,16 +133,37 @@ SYSTEM_PROMPT = """You are Yuri, a helpful data assistant for the company Finish
 
 Today's date is {today} ({day_of_week}).
 
-You have access to a Supabase (Postgres) database with the following schema:
+{business_context}
 
+═══════════════════════════════════════════════════════════
+CURRENT USER
+═══════════════════════════════════════════════════════════
+{user_context}
+
+═══════════════════════════════════════════════════════════
+BOT RULES (from yuri_rules — always follow these)
+═══════════════════════════════════════════════════════════
+{rules}
+
+═══════════════════════════════════════════════════════════
+DATABASE SCHEMA
+═══════════════════════════════════════════════════════════
 {schema}
 
-{business_rules}
-
 When users ask questions about data, you should:
-1. Generate a SQL query to fetch the relevant information
-2. Use the execute_sql tool to run the query
-3. Provide a clear, conversational answer based on the results
+1. Look up the current user's role and apply the appropriate data access rules
+2. Generate a SQL query to fetch the relevant information (with proper access filtering)
+3. Use the execute_sql tool to run the query
+4. Provide a clear, conversational answer based on the results
+
+CRITICAL — DATA ACCESS ENFORCEMENT:
+- For ADMIN users: No deal filtering needed. They can see all data.
+- For STANDARD users: ALWAYS add a WHERE clause that filters deals to only those where the user's name
+  appears in deal_owner, sales_rep_on_account, or sales_rep_on_deal. Use the user's name from the
+  CURRENT USER section above. Example:
+  WHERE (deal_owner ILIKE '%Ann%' OR sales_rep_on_account ILIKE '%Ann%' OR sales_rep_on_deal ILIKE '%Ann%')
+- If a standard user asks for data that isn't scoped to them, politely explain they can only see their own deals.
+- NEVER skip this filtering for standard users, even if they ask to see "all" deals.
 
 Be helpful, friendly, and concise. If you're unsure about something, ask for clarification.
 If a query returns no results, explain that clearly and suggest alternatives.
@@ -307,6 +350,37 @@ def get_week_dates():
     return "\n".join(lines)
 
 
+def build_user_context(slack_user_id, slack_name):
+    """Look up user in yuri_user_directory and build context string for the system prompt."""
+    directory_user = lookup_user(slack_user_id)
+    if directory_user:
+        role = directory_user['role']
+        name = directory_user['name']
+        zoho_id = directory_user.get('zoho_user_id', 'unknown')
+        if role == 'admin':
+            return (
+                f"Name: {name}\n"
+                f"Slack ID: {slack_user_id}\n"
+                f"Zoho ID: {zoho_id}\n"
+                f"Role: ADMIN — full access to all deals, accounts, and systems. No deal filtering required."
+            )
+        else:
+            return (
+                f"Name: {name}\n"
+                f"Slack ID: {slack_user_id}\n"
+                f"Zoho ID: {zoho_id}\n"
+                f"Role: STANDARD — can only access deals where '{name}' appears in deal_owner, sales_rep_on_account, or sales_rep_on_deal.\n"
+                f"All SQL queries for deal data MUST include a WHERE clause filtering on these columns using this user's name."
+            )
+    else:
+        return (
+            f"Name: {slack_name}\n"
+            f"Slack ID: {slack_user_id}\n"
+            f"Role: UNKNOWN — user not found in yuri_user_directory. Do NOT return any deal data.\n"
+            f"Politely tell them to contact an administrator to get set up."
+        )
+
+
 def get_user_info(client, user_id):
     try:
         result = client.users_info(user=user_id)
@@ -421,8 +495,17 @@ def handle_mention(event, say, client, logger):
     history = get_history(conv_key)
 
     schema_desc = get_schema_description()
+    rules_text = get_cached_rules()
+    user_context = build_user_context(user_id, user_info['name'])
     today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
-    system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
+    system_prompt = SYSTEM_PROMPT.format(
+        schema=schema_desc,
+        business_context=BUSINESS_CONTEXT,
+        rules=rules_text,
+        user_context=user_context,
+        today=today.strftime("%Y-%m-%d"),
+        day_of_week=today.strftime("%A")
+    )
 
     try:
         response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
@@ -479,8 +562,17 @@ def handle_message(event, say, client, logger):
         history = get_history(conv_key)
 
         schema_desc = get_schema_description()
+        rules_text = get_cached_rules()
+        user_context = build_user_context(user_id, user_info['name'])
         today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
-        system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
+        system_prompt = SYSTEM_PROMPT.format(
+            schema=schema_desc,
+            business_context=BUSINESS_CONTEXT,
+            rules=rules_text,
+            user_context=user_context,
+            today=today.strftime("%Y-%m-%d"),
+            day_of_week=today.strftime("%A")
+        )
 
         try:
             response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
