@@ -108,6 +108,8 @@ RESPONSE GUIDELINES:
 
 SYSTEM_PROMPT = """You are Yuri, a helpful data assistant for the company Finished Goods.
 
+Today's date is {today} ({day_of_week}).
+
 You have access to a Supabase (Postgres) database with the following schema:
 
 {schema}
@@ -415,7 +417,8 @@ def handle_mention(event, say, client, logger):
     history = get_history(conv_key)
 
     schema_desc = get_schema_description()
-    system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES)
+    today = date.today()
+    system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
 
     try:
         response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
@@ -472,7 +475,8 @@ def handle_message(event, say, client, logger):
         history = get_history(conv_key)
 
         schema_desc = get_schema_description()
-        system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES)
+        today = date.today()
+        system_prompt = SYSTEM_PROMPT.format(schema=schema_desc, business_rules=BUSINESS_RULES, today=today.strftime("%Y-%m-%d"), day_of_week=today.strftime("%A"))
 
         try:
             response, updated_history = chat_with_claude(text, user_info, system_prompt, query_tools, history)
