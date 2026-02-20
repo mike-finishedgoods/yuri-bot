@@ -475,21 +475,12 @@ QB DATA GUIDELINES:
 - For dollar amounts in results, display home_total_amt and home_balance (USD values)
 - Do NOT confuse deals data with QB data — deals track the sales pipeline, QB tables track actual invoices/bills/estimates
 
-QB ↔ DEALS CROSS-REFERENCE:
-- qbo_invoices and qbo_bills do NOT have a direct foreign key to deals
-- To connect invoices to sales reps or deal info, join on customer name:
-    qbo_invoices.customer_name  →  deals.account_name
-- To connect bills to deals, join on vendor name:
-    qbo_bills.vendor_name  →  deals.vendor (or deal_line_items.vendor_name)
-- These are text-based joins — use ILIKE for fuzzy matching if needed
-- Example: invoices by sales rep:
-    SELECT d.deal_owner, i.doc_number, i.customer_name, i.home_total_amt, i.home_balance, i.due_date
-    FROM qbo_invoices i
-    JOIN deals d ON i.customer_name ILIKE d.account_name
-    WHERE i.balance > 0 AND i.due_date < CURRENT_DATE
-    GROUP BY d.deal_owner, i.doc_number, i.customer_name, i.home_total_amt, i.home_balance, i.due_date
-    ORDER BY d.deal_owner, i.due_date
-- Note: One customer may have multiple deals with different reps. Use DISTINCT or pick the most relevant deal.
+IMPORTANT — QB TABLES ARE STANDALONE:
+- qbo_invoices, qbo_bills, and qbo_estimates have NO foreign key to deals
+- Customer names in QB do NOT match account_name in deals (different naming conventions)
+- NEVER join QB tables to deals — it will silently return zero rows
+- When asked about invoices "by sales rep" or "by account," group by customer_name instead
+- QB data stands on its own — query it directly from the qbo_ tables
 
 ═══════════════════════════════════════════════════════════
 TABLE: yuri_user_directory (maps Slack users to Zoho IDs and roles)
