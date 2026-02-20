@@ -487,6 +487,8 @@ def chat_with_claude_streaming(user_message, user_info, system_prompt, tools_lis
 
     messages.append({"role": "user", "content": contextual_message})
 
+    first_update = True
+
     while True:
         accumulated_text = ""
         last_update_time = 0
@@ -501,9 +503,14 @@ def chat_with_claude_streaming(user_message, user_info, system_prompt, tools_lis
             for text in stream.text_stream:
                 accumulated_text += text
                 now = time.time()
-                if now - last_update_time >= SLACK_UPDATE_INTERVAL and accumulated_text.strip():
+                # First update: wait for 40+ chars so we don't flash "I" or "I'll"
+                # Subsequent updates: normal interval
+                min_length = 40 if first_update else 0
+                if (now - last_update_time >= SLACK_UPDATE_INTERVAL
+                        and len(accumulated_text.strip()) >= min_length):
                     try:
                         client.chat_update(channel=channel, ts=message_ts, text=accumulated_text)
+                        first_update = False
                     except Exception:
                         pass
                     last_update_time = now
