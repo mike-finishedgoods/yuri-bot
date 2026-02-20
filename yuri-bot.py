@@ -128,6 +128,7 @@ RESPONSE GUIDELINES:
 - If a question is ambiguous, make your best guess AND ask for clarification
 - If results are empty, suggest what they might try instead
 - When a user refers to something from earlier in the conversation, use context — don't ask them to repeat themselves
+- FORMATTING: You are responding in Slack, which uses *single asterisks* for bold (NOT **double**). Use Slack mrkdwn syntax: *bold*, _italic_, ~strikethrough~, `code`. Do NOT use Markdown-style **bold** or ### headers.
 """
 
 SYSTEM_PROMPT = """You are Yuri, a helpful data assistant for the company Finished Goods.
@@ -407,6 +408,15 @@ def classify_api_error(e):
         return "Sorry, I encountered an error processing your request. Please try again."
 
 
+def format_for_slack(text):
+    """Convert Markdown formatting to Slack mrkdwn formatting."""
+    # **bold** → *bold*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Remove any remaining markdown headers (### Header → Header)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    return text
+
+
 def chat_with_claude(user_message, user_info, system_prompt, tools_list, history=None):
     """Send a message to Claude with conversation history and handle tool calls"""
     contextual_message = f"User: {user_info['name']}"
@@ -464,7 +474,7 @@ def chat_with_claude(user_message, user_info, system_prompt, tools_list, history
         if block.type == "text":
             final_response += block.text
 
-    return final_response, messages
+    return format_for_slack(final_response), messages
 
 
 # =============================================================================
@@ -520,7 +530,7 @@ def chat_with_claude_streaming(user_message, user_info, system_prompt, tools_lis
                 if (now - last_update_time >= SLACK_UPDATE_INTERVAL
                         and len(accumulated_text.strip()) >= min_length):
                     try:
-                        client.chat_update(channel=channel, ts=message_ts, text=accumulated_text)
+                        client.chat_update(channel=channel, ts=message_ts, text=format_for_slack(accumulated_text))
                         first_update = False
                     except Exception:
                         pass
@@ -555,7 +565,7 @@ def chat_with_claude_streaming(user_message, user_info, system_prompt, tools_lis
                     final_text += block.text
 
             try:
-                client.chat_update(channel=channel, ts=message_ts, text=final_text)
+                client.chat_update(channel=channel, ts=message_ts, text=format_for_slack(final_text))
             except Exception as e:
                 logger.error(f"Failed final Slack update: {e}")
 
