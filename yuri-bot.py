@@ -104,6 +104,46 @@ def get_cached_rules():
 
 
 # =============================================================================
+# OFF-TOPIC FILTER (Haiku pre-screen)
+# =============================================================================
+
+RELEVANCE_CLASSIFIER_PROMPT = """You are a message classifier for a business Slack bot called Yuri at a company called Finished Goods (a product sourcing and procurement company).
+
+Yuri can help with: deals, sales orders, line items, invoices, bills, estimates, quotes, time off / OOO, who's out, employees, accounts, customers, vendors, brokers, shipping, production, delivery, revenue, profit, commissions, QuickBooks data, and general company operations questions.
+
+Classify whether the following message is something Yuri should handle. Respond with ONLY one word: WORK or OFF_TOPIC.
+
+WORK = related to Finished Goods business, operations, or data (even if vague or conversational like "hey what's my pipeline look like" or "any updates on SO 7158" or "who do I talk to about X")
+Also WORK = greetings that likely lead to a work question ("hey yuri", "good morning", "hi"), follow-ups ("yes", "show me more", "what about that one", "thanks"), or meta questions about Yuri itself ("what can you do", "help")
+
+OFF_TOPIC = clearly non-work: trivia, jokes, recipes, personal advice, homework, coding help, general knowledge, creative writing, games, philosophical debates, etc.
+
+When in doubt, say WORK. Only flag things that are obviously unrelated to any business purpose."""
+
+
+def is_off_topic(message_text):
+    """Use Haiku to classify whether a message is off-topic. Returns True if off-topic."""
+    try:
+        response = anthropic.messages.create(
+            model="claude-haiku-4-5-20241022",
+            max_tokens=10,
+            messages=[{"role": "user", "content": f"Message: {message_text}"}],
+            system=RELEVANCE_CLASSIFIER_PROMPT
+        )
+        result = response.content[0].text.strip().upper()
+        if "OFF" in result:
+            logger.info(f"Off-topic filter triggered for: {message_text[:80]}")
+            return True
+        return False
+    except Exception as e:
+        logger.warning(f"Off-topic classifier failed, allowing message through: {e}")
+        return False  # fail open — don't block work questions if Haiku is down
+
+
+OFF_TOPIC_RESPONSE = "I'm Yuri, the Finished Goods data assistant! I can help with deals, invoices, bills, time off, and other company data — but I'm not set up for general questions. What can I look up for you?"
+
+
+# =============================================================================
 # SYSTEM PROMPTS
 # =============================================================================
 
@@ -634,6 +674,12 @@ def handle_mention(event, say, client, logger):
         return
 
     # All other channels — with conversation memory
+
+    # Off-topic filter — skip expensive Sonnet call for non-work messages
+    if is_off_topic(text):
+        say(OFF_TOPIC_RESPONSE)
+        return
+
     conv_key = get_conversation_key(channel, "channel", user_id)
     history = get_history(conv_key)
 
@@ -706,6 +752,11 @@ def handle_message(event, say, client, logger):
     # DMs — with conversation memory
     if channel_type == "im":
         logger.info(f"Received DM from user {user_id}: {text}")
+
+        # Off-topic filter — skip expensive Sonnet call for non-work messages
+        if is_off_topic(text):
+            say(OFF_TOPIC_RESPONSE)
+            return
 
         user_info = get_user_info(client, user_id)
         conv_key = get_conversation_key(channel, channel_type, user_id)
